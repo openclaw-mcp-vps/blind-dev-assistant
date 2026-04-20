@@ -1,54 +1,33 @@
+import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { hasPaidAccess } from "@/lib/auth";
-import { PaywallGate } from "@/components/PaywallGate";
-import { Button } from "@/components/ui/button";
+
+import { DashboardWorkspace } from "@/components/DashboardWorkspace";
+import { hasPaidCookie, paywallCookieName } from "@/lib/lemonsqueezy";
 
 export default async function DashboardPage() {
-  const paid = await hasPaidAccess();
+  const cookieStore = await cookies();
+  const hasAccess = hasPaidCookie(cookieStore.get(paywallCookieName)?.value);
 
-  if (!paid) {
-    return (
-      <main className="min-h-screen bg-[#0d1117] px-4 py-10 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-5xl space-y-6">
-          <div>
-            <h1 className="text-3xl font-semibold text-slate-100">Blind Dev Assistant Dashboard</h1>
-            <p className="mt-2 text-slate-300">
-              Unlock pro access to generate your personalized coding environment package.
-            </p>
-          </div>
-          <PaywallGate />
-        </div>
-      </main>
-    );
+  if (!hasAccess) {
+    redirect("/#pricing");
   }
 
   return (
-    <main className="min-h-screen bg-[#0d1117] px-4 py-10 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-4xl rounded-xl border border-slate-700 bg-slate-900/60 p-8">
-        <h1 className="text-3xl font-semibold text-slate-100">Access Active</h1>
-        <p className="mt-3 text-slate-300">
-          Your paid access is active. Start the assessment and generate your custom VS Code and terminal setup package.
-        </p>
-        <div className="mt-6 flex flex-wrap gap-3">
-          <Link href="/assessment">
-            <Button size="lg">Open Accessibility Assessment</Button>
-          </Link>
-          <form
-            action={async () => {
-              "use server";
-              const { cookies } = await import("next/headers");
-              const cookieStore = await cookies();
-              cookieStore.delete("bda_access");
-              redirect("/dashboard");
-            }}
-          >
-            <Button type="submit" variant="outline" size="lg">
-              Sign Out
-            </Button>
-          </form>
+    <main className="section-shell py-10 md:py-16">
+      <div className="mb-8 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="font-[var(--font-heading)] text-3xl text-slate-100 md:text-4xl">Setup Dashboard</h1>
+          <p className="mt-2 text-sm text-slate-300 md:text-base">
+            Build and download your personalized VS Code configuration package.
+          </p>
         </div>
+        <Link className="text-sm text-blue-300 underline" href="/assessment">
+          Edit assessment
+        </Link>
       </div>
+
+      <DashboardWorkspace />
     </main>
   );
 }

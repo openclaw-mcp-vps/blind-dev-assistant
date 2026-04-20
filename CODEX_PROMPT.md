@@ -23,10 +23,11 @@ PLANNED FILES:
 - components/ConfigGenerator.tsx
 - components/AudioFeedback.tsx
 - lib/config-templates.ts
+- lib/screen-reader-utils.ts
 - lib/lemonsqueezy.ts
-- lib/auth.ts
+- types/accessibility.ts
 
-DEPENDENCIES: next, tailwindcss, @lemonsqueezy/lemonsqueezy.js, next-auth, prisma, @prisma/client, archiver, react-hook-form, zod, lucide-react
+DEPENDENCIES: next, tailwindcss, @lemonsqueezy/lemonsqueezy.js, zustand, zod, archiver, js-yaml, @radix-ui/react-dialog, @radix-ui/react-select, lucide-react
 
 REQUIREMENTS:
 - Next.js 15 with App Router (app/ directory)

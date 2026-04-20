@@ -1,181 +1,211 @@
-export type AssessmentData = {
-  fullName: string;
-  workEmail: string;
-  screenReader: "nvda" | "jaws" | "voiceover" | "orca" | "other";
-  operatingSystem: "windows" | "macos" | "linux";
-  experienceLevel: "beginner" | "intermediate" | "advanced";
-  codingFocus: string;
-  audioCues: boolean;
-  highVerbosity: boolean;
-  customNeeds: string;
-};
+import yaml from "js-yaml";
 
-type GeneratedConfig = {
-  vscodeSettings: Record<string, unknown>;
-  keybindings: Array<Record<string, string>>;
-  recommendedExtensions: string[];
-  terminalProfile: string;
-  installScript: string;
-  readme: string;
-};
+import type { AccessibilityAssessment, GeneratedConfigFile, GenerationResult } from "@/types/accessibility";
+import { buildAccessibilityNotes, getScreenReaderExtension, recommendedSpeechRate } from "@/lib/screen-reader-utils";
 
-const commonExtensions = [
-  "ms-vscode.powershell",
-  "streetsidesoftware.code-spell-checker",
-  "ms-vscode.live-server",
-  "eamodio.gitlens"
-];
-
-const screenReaderExtensions: Record<string, string[]> = {
-  nvda: ["ms-vscode.vscode-speech", "usernamehw.errorlens"],
-  jaws: ["ms-vscode.vscode-speech", "gruntfuggly.todo-tree"],
-  voiceover: ["ms-python.python", "ms-toolsai.jupyter"],
-  orca: ["redhat.vscode-yaml", "esbenp.prettier-vscode"],
-  other: ["ms-vscode.vscode-speech"]
-};
-
-export function createConfigBundle(input: AssessmentData): GeneratedConfig {
-  const audioVolume = input.highVerbosity ? 90 : 70;
-
-  const vscodeSettings: Record<string, unknown> = {
-    "editor.accessibilitySupport": "on",
-    "editor.tabSize": 2,
-    "editor.minimap.enabled": false,
-    "editor.wordWrap": "bounded",
-    "editor.wordWrapColumn": 100,
-    "terminal.integrated.enableVisualBell": false,
-    "terminal.integrated.bellStyle": "audible",
-    "workbench.list.smoothScrolling": false,
-    "audioCues.enabled": input.audioCues ? "on" : "auto",
-    "audioCues.volume": audioVolume,
-    "accessibility.voice.speechTimeout": input.highVerbosity ? 2500 : 1200,
-    "breadcrumbs.enabled": false,
-    "debug.console.wordWrap": true,
-    "editor.quickSuggestions": {
-      comments: false,
-      strings: true,
-      other: true
-    }
+function buildSettingsJson(assessment: AccessibilityAssessment) {
+  const highContrastTerminalTheme = {
+    "terminal.ansiBlack": "#0b1014",
+    "terminal.ansiBlue": "#4fa8ff",
+    "terminal.ansiBrightBlack": "#6e7681",
+    "terminal.ansiBrightBlue": "#79c0ff",
+    "terminal.ansiBrightCyan": "#39d0d8",
+    "terminal.ansiBrightGreen": "#7ee787",
+    "terminal.ansiBrightMagenta": "#d2a8ff",
+    "terminal.ansiBrightRed": "#ffa198",
+    "terminal.ansiBrightWhite": "#f0f6fc",
+    "terminal.ansiBrightYellow": "#f2cc60",
+    "terminal.ansiCyan": "#39c5cf",
+    "terminal.ansiGreen": "#56d364",
+    "terminal.ansiMagenta": "#bc8cff",
+    "terminal.ansiRed": "#ff7b72",
+    "terminal.ansiWhite": "#c9d1d9",
+    "terminal.ansiYellow": "#d29922"
   };
 
+  return {
+    "workbench.colorTheme": "Default Dark Modern",
+    "workbench.preferredDarkColorTheme": "Default Dark Modern",
+    "editor.cursorBlinking": "phase",
+    "editor.minimap.enabled": false,
+    "editor.stickyScroll.enabled": false,
+    "editor.accessibilitySupport": "on",
+    "editor.accessibilityPageSize": 18,
+    "editor.lineNumbers": "relative",
+    "editor.fontSize": 16,
+    "editor.renderWhitespace": "boundary",
+    "terminal.integrated.cursorStyle": "line",
+    "terminal.integrated.cursorWidth": assessment.needsHighContrastTerminal ? 3 : 2,
+    "terminal.integrated.fontSize": 18,
+    "terminal.integrated.gpuAcceleration": "off",
+    "audioCues.enabled": assessment.enableAudioDebugCues ? "on" : "auto",
+    "audioCues.lineHasError": "on",
+    "audioCues.taskCompleted": assessment.enableAudioDebugCues ? "on" : "auto",
+    "audioCues.taskFailed": "on",
+    "accessibility.voice.speechRate": recommendedSpeechRate(assessment.screenReader),
+    "debug.console.wordWrap": true,
+    "files.autoSave": "onFocusChange",
+    ...(assessment.reduceAuditoryNoise
+      ? {
+          "workbench.startupEditor": "none",
+          "workbench.editor.enablePreview": false,
+          "accessibility.signals.terminalCommandFailed": {
+            sound: "off",
+            announcement: "auto"
+          }
+        }
+      : {}),
+    ...(assessment.needsHighContrastTerminal ? highContrastTerminalTheme : {})
+  };
+}
+
+function buildKeybindingsJson(assessment: AccessibilityAssessment) {
   const keybindings = [
     {
-      key: "ctrl+alt+r",
-      command: "workbench.action.chat.startVoiceChat",
-      when: "editorTextFocus"
-    },
-    {
-      key: "ctrl+alt+d",
+      key: "alt+f2",
       command: "editor.action.marker.next",
       when: "editorTextFocus"
     },
     {
-      key: "ctrl+alt+b",
-      command: "workbench.action.navigateBack",
+      key: "alt+shift+f2",
+      command: "editor.action.marker.prev",
       when: "editorTextFocus"
     },
     {
-      key: "ctrl+alt+f",
-      command: "workbench.action.navigateForward",
-      when: "editorTextFocus"
+      key: "ctrl+alt+r",
+      command: "workbench.action.terminal.focus"
+    },
+    {
+      key: "ctrl+alt+d",
+      command: "workbench.debug.action.toggleRepl"
+    },
+    {
+      key: "ctrl+alt+g",
+      command: "workbench.action.gotoSymbol"
+    },
+    {
+      key: "ctrl+alt+e",
+      command: "editor.action.nextMatchFindAction",
+      when: "editorFocus"
     }
   ];
 
-  const terminalProfile = createTerminalProfile(input);
+  if (assessment.prefersVimBindings) {
+    keybindings.push({
+      key: "ctrl+alt+v",
+      command: "extension.vim_escape"
+    });
+  }
 
-  const recommendedExtensions = [
-    ...new Set([...commonExtensions, ...screenReaderExtensions[input.screenReader]])
-  ];
+  return keybindings;
+}
 
-  const installScript = createInstallScript(input, recommendedExtensions);
-  const readme = createReadme(input, recommendedExtensions);
-
-  return {
-    vscodeSettings,
-    keybindings,
-    recommendedExtensions,
-    terminalProfile,
-    installScript,
-    readme
+function buildExtensionsYaml(assessment: AccessibilityAssessment) {
+  const extensions = getScreenReaderExtension(assessment);
+  const extensionManifest = {
+    version: 1,
+    profile: `${assessment.screenReader}-${assessment.operatingSystem}`,
+    extensions
   };
+
+  return yaml.dump(extensionManifest, { noRefs: true, lineWidth: 120 });
 }
 
-function createTerminalProfile(input: AssessmentData) {
-  if (input.operatingSystem === "windows") {
+function buildSetupScript(assessment: AccessibilityAssessment) {
+  const extensionLines = getScreenReaderExtension(assessment)
+    .map((extension) => `code --install-extension ${extension}`)
+    .join("\n");
+
+  const copyCmd =
+    assessment.operatingSystem === "windows"
+      ? "Copy-Item .\\.vscode\\* $env:APPDATA\\Code\\User\\ -Force"
+      : "cp -R ./.vscode/* \"$HOME/.config/Code/User/\"";
+
+  if (assessment.operatingSystem === "windows") {
     return [
-      "# PowerShell profile for accessible coding workflow",
-      "$Host.UI.RawUI.WindowTitle = 'Blind Dev Assistant Shell'",
-      "Set-PSReadLineOption -BellStyle Audible",
-      "Set-PSReadLineOption -PredictionViewStyle ListView",
-      "Set-PSReadLineOption -EditMode Windows",
-      "function Say-Status { param([string]$Text) Add-Type -AssemblyName System.Speech;",
-      "  $speak = New-Object System.Speech.Synthesis.SpeechSynthesizer; $speak.Speak($Text) }"
+      "$ErrorActionPreference = 'Stop'",
+      "Write-Host 'Installing accessible VS Code extension profile...'",
+      extensionLines,
+      "Write-Host 'Applying screen reader focused user settings...'",
+      copyCmd,
+      "Write-Host 'Done. Restart VS Code and confirm your screen reader announces line and symbol navigation correctly.'"
     ].join("\n");
   }
-
-  if (input.operatingSystem === "macos") {
-    return [
-      "# zsh profile tuned for VoiceOver-friendly CLI output",
-      "export TERM=xterm-256color",
-      "setopt NO_BEEP",
-      "autoload -Uz compinit && compinit",
-      "alias ll='ls -lah'",
-      "say_status() { say \"$1\"; }"
-    ].join("\n");
-  }
-
-  return [
-    "# bash profile tuned for Orca-friendly feedback",
-    "export TERM=xterm-256color",
-    "set bell-style audible",
-    "alias ll='ls -lah --group-directories-first'",
-    "say_status() { spd-say \"$1\"; }"
-  ].join("\n");
-}
-
-function createInstallScript(input: AssessmentData, extensions: string[]) {
-  const extensionCommands = extensions.map((ext) => `code --install-extension ${ext}`).join("\n");
 
   return [
     "#!/usr/bin/env bash",
     "set -euo pipefail",
-    "echo 'Blind Dev Assistant installer started.'",
-    "mkdir -p ~/.config/Code/User",
-    "cp ./settings.json ~/.config/Code/User/settings.json",
-    "cp ./keybindings.json ~/.config/Code/User/keybindings.json",
-    "echo 'Installing recommended VS Code extensions...'",
-    extensionCommands,
-    `echo 'Setup complete for ${input.fullName}. Focus: ${input.codingFocus}.'`,
-    "echo 'Open VS Code and run the command: Accessibility: Signal Sound.'"
+    "echo 'Installing accessible VS Code extension profile...'",
+    extensionLines,
+    "echo 'Applying screen reader focused user settings...'",
+    copyCmd,
+    "echo 'Done. Restart VS Code and validate keyboard-only navigation with your screen reader.'"
   ].join("\n");
 }
 
-function createReadme(input: AssessmentData, extensions: string[]) {
+function buildReadme(assessment: AccessibilityAssessment) {
+  const notes = buildAccessibilityNotes(assessment);
+
   return [
-    "# Blind Dev Assistant Configuration Package",
+    "# Blind Dev Assistant Config Bundle",
     "",
-    `Prepared for: ${input.fullName} (${input.workEmail})`,
-    `Primary screen reader: ${input.screenReader.toUpperCase()}`,
-    `Primary OS: ${input.operatingSystem}`,
-    `Experience level: ${input.experienceLevel}`,
+    `Generated for ${assessment.fullName}`,
     "",
-    "## What is included",
-    "- VS Code settings tuned for keyboard-first navigation",
-    "- Custom keybindings for fast diagnostics and back/forward context movement",
-    "- Terminal profile with audible confirmation helpers",
-    "- Install script for extension and config rollout",
+    "## Installation",
     "",
-    "## Recommended extensions",
-    ...extensions.map((ext) => `- ${ext}`),
-    "",
-    "## Install steps",
-    "1. Unzip the package.",
-    "2. Run `chmod +x install.sh && ./install.sh`.",
+    "1. Open this folder in a terminal.",
+    `2. Run ${assessment.operatingSystem === "windows" ? "`./setup.ps1`" : "`./setup.sh`"}.`,
     "3. Restart VS Code.",
-    "4. Open a project and verify `Ctrl+Alt+D` jumps to the next error.",
+    "4. Open Command Palette and run `Preferences: Open Keyboard Shortcuts (JSON)` to confirm keybindings loaded.",
     "",
-    "## Personalized notes",
-    input.customNeeds ||
-      "No extra constraints were provided. Use dashboard regeneration if your workflow changes."
+    "## Accessibility Priorities Included",
+    "",
+    ...notes.map((note) => `- ${note}`),
+    "",
+    "## Your Main Workflow Improvement",
+    "",
+    assessment.biggestPainPoint,
+    "",
+    "## Support",
+    "",
+    "If one command conflicts with your enterprise policy, remove it from setup script and keep the rest."
   ].join("\n");
+}
+
+export function generateConfigBundle(assessment: AccessibilityAssessment): GenerationResult {
+  const settings = JSON.stringify(buildSettingsJson(assessment), null, 2);
+  const keybindings = JSON.stringify(buildKeybindingsJson(assessment), null, 2);
+  const extensionsYaml = buildExtensionsYaml(assessment);
+  const setupScript = buildSetupScript(assessment);
+  const readme = buildReadme(assessment);
+
+  const files: GeneratedConfigFile[] = [
+    { path: ".vscode/settings.json", content: settings },
+    { path: ".vscode/keybindings.json", content: keybindings },
+    { path: "extensions.yml", content: extensionsYaml },
+    {
+      path: assessment.operatingSystem === "windows" ? "setup.ps1" : "setup.sh",
+      content: setupScript
+    },
+    { path: "README.md", content: readme }
+  ];
+
+  const setupChecklist = [
+    "Confirm your screen reader is running before starting VS Code.",
+    "Install command line `code` tool from VS Code command palette if missing.",
+    "Run the setup script with administrative permissions if your org restricts extension installs.",
+    "Restart VS Code and test symbol navigation with the included keybindings.",
+    "Open Terminal and run a sample build to hear configured debug audio cues."
+  ];
+
+  return {
+    filename: `blind-dev-assistant-${assessment.operatingSystem}-${assessment.screenReader}.zip`,
+    files,
+    setupChecklist,
+    preview: {
+      extensions: getScreenReaderExtension(assessment),
+      keybindings: buildKeybindingsJson(assessment).map((item) => `${item.key} -> ${item.command}`),
+      notes: buildAccessibilityNotes(assessment)
+    }
+  };
 }

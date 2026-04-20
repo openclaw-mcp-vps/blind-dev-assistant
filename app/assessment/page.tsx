@@ -1,31 +1,23 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
-import { hasPaidAccess } from "@/lib/auth";
-import { AssessmentWorkspace } from "@/components/AssessmentWorkspace";
 
-export default async function AssessmentPage() {
-  const paid = await hasPaidAccess();
+import { AccessibilityAssessment } from "@/components/AccessibilityAssessment";
 
-  if (!paid) {
-    redirect("/dashboard");
-  }
-
+export default function AssessmentPage() {
   return (
-    <main className="min-h-screen bg-[#0d1117] px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-6xl space-y-6">
-        <div className="space-y-2">
-          <Link href="/dashboard" className="text-sm text-cyan-300 underline-offset-2 hover:underline">
-            Back to Dashboard
-          </Link>
-          <h1 className="text-3xl font-semibold text-slate-100">Generate Your Accessible Dev Setup</h1>
-          <p className="max-w-3xl text-slate-300">
-            Complete the assessment and download a ready-to-install package with VS Code settings, keybindings,
-            extensions, terminal profile, and guided setup notes.
-          </p>
-        </div>
-
-        <AssessmentWorkspace />
+    <main className="section-shell py-10 md:py-16">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <h1 className="font-[var(--font-heading)] text-3xl text-slate-100 md:text-4xl">Accessibility Assessment</h1>
+        <Link className="text-sm text-blue-300 underline" href="/">
+          Back to landing page
+        </Link>
       </div>
+
+      <p className="mb-8 max-w-3xl text-sm leading-relaxed text-slate-300 md:text-base">
+        This guided profile maps your actual screen reader and coding workflow into concrete VS Code settings and setup scripts. When
+        you submit, your profile is saved locally in this browser and used in your dashboard generator.
+      </p>
+
+      <AccessibilityAssessment ctaLabel="Save Profile and Continue" redirectTo="/dashboard" />
     </main>
   );
 }

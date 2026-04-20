@@ -1,34 +1,91 @@
+import * as LemonSqueezySDK from "@lemonsqueezy/lemonsqueezy.js";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { lemonSqueezySetup } from "@lemonsqueezy/lemonsqueezy.js";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 
-export function initLemonClient() {
-  lemonSqueezySetup({
-    apiKey: process.env.LEMON_SQUEEZY_API_KEY || "",
-    onError: (error) => {
-      console.error("Lemon Squeezy SDK error", error);
-    }
-  });
+interface PurchaseRecord {
+  orderId: string;
+  email: string;
+  productId?: string;
+  status: "paid" | "refunded";
+  createdAt: string;
 }
 
-export function verifyWebhookSignature(rawBody: string, signatureHeader: string | null): boolean {
-  const secret = process.env.LEMON_SQUEEZY_WEBHOOK_SECRET;
-  if (!secret || !signatureHeader) return false;
+const dataFile = path.join(process.cwd(), "data", "purchases.json");
 
-  const digest = createHmac("sha256", secret).update(rawBody).digest("hex");
-  const provided = Buffer.from(signatureHeader, "utf8");
-  const expected = Buffer.from(digest, "utf8");
+export const paywallCookieName = "bda_paid_access";
+export const paywallCookieValue = "active";
 
-  if (provided.length !== expected.length) return false;
-  return timingSafeEqual(provided, expected);
-}
-
-export function getCheckoutUrl(): string {
-  const storeId = process.env.NEXT_PUBLIC_LEMON_SQUEEZY_STORE_ID;
+export function getCheckoutUrlFromEnv(): string | null {
   const productId = process.env.NEXT_PUBLIC_LEMON_SQUEEZY_PRODUCT_ID;
-
-  if (!storeId || !productId) {
-    return "";
+  if (!productId) {
+    return null;
   }
 
-  return `https://app.lemonsqueezy.com/checkout/buy/${storeId}?product=${productId}`;
+  if (productId.startsWith("http://") || productId.startsWith("https://")) {
+    return productId;
+  }
+
+  return `https://checkout.lemonsqueezy.com/buy/${productId}`;
+}
+
+export function verifyLemonSqueezySignature(rawBody: string, signature: string | null): boolean {
+  const secret = process.env.LEMON_SQUEEZY_WEBHOOK_SECRET;
+
+  if (!secret || !signature) {
+    return false;
+  }
+
+  const digest = createHmac("sha256", secret).update(rawBody).digest("hex");
+
+  try {
+    return timingSafeEqual(Buffer.from(digest), Buffer.from(signature));
+  } catch {
+    return false;
+  }
+}
+
+async function readPurchases(): Promise<PurchaseRecord[]> {
+  try {
+    const raw = await fs.readFile(dataFile, "utf8");
+    const parsed = JSON.parse(raw) as PurchaseRecord[];
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed;
+  } catch {
+    return [];
+  }
+}
+
+async function writePurchases(records: PurchaseRecord[]) {
+  await fs.mkdir(path.dirname(dataFile), { recursive: true });
+  await fs.writeFile(dataFile, JSON.stringify(records, null, 2), "utf8");
+}
+
+export async function upsertPurchase(record: PurchaseRecord) {
+  const records = await readPurchases();
+  const index = records.findIndex((item) => item.orderId === record.orderId);
+
+  if (index === -1) {
+    records.push(record);
+  } else {
+    records[index] = record;
+  }
+
+  await writePurchases(records);
+}
+
+export async function hasPaidOrder(orderId: string): Promise<boolean> {
+  const records = await readPurchases();
+  return records.some((record) => record.orderId === orderId && record.status === "paid");
+}
+
+export function sdkLoaded(): boolean {
+  return Object.keys(LemonSqueezySDK).length > 0;
+}
+
+export function hasPaidCookie(value: string | undefined): boolean {
+  return value === paywallCookieValue;
 }

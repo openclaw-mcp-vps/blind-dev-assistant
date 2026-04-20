@@ -1,92 +1,72 @@
 import archiver from "archiver";
+import { cookies } from "next/headers";
+import { NextResponse } from "next/server";
 import { PassThrough } from "node:stream";
-import { z } from "zod";
-import { hasPaidAccess } from "@/lib/auth";
-import { createConfigBundle } from "@/lib/config-templates";
 
-const assessmentSchema = z.object({
-  fullName: z.string().min(2),
-  workEmail: z.string().email(),
-  screenReader: z.enum(["nvda", "jaws", "voiceover", "orca", "other"]),
-  operatingSystem: z.enum(["windows", "macos", "linux"]),
-  experienceLevel: z.enum(["beginner", "intermediate", "advanced"]),
-  codingFocus: z.string().min(3),
-  audioCues: z.boolean(),
-  highVerbosity: z.boolean(),
-  customNeeds: z.string().optional().default("")
-});
+import { generateConfigBundle } from "@/lib/config-templates";
+import { hasPaidCookie, paywallCookieName } from "@/lib/lemonsqueezy";
+import { accessibilityAssessmentSchema, type GeneratedConfigFile } from "@/types/accessibility";
 
-async function zipFiles(files: Array<{ name: string; content: string }>): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const archive = archiver("zip", { zlib: { level: 9 } });
-    const stream = new PassThrough();
-    const chunks: Buffer[] = [];
+export const runtime = "nodejs";
 
-    stream.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
-    stream.on("end", () => resolve(Buffer.concat(chunks)));
-    stream.on("error", (error) => reject(error));
+async function zipFiles(files: GeneratedConfigFile[]): Promise<Buffer> {
+  const archive = archiver("zip", { zlib: { level: 9 } });
+  const output = new PassThrough();
+  const chunks: Buffer[] = [];
 
-    archive.on("error", (error) => reject(error));
-    archive.pipe(stream);
-
-    for (const file of files) {
-      archive.append(file.content, { name: file.name });
-    }
-
-    archive.finalize().catch(reject);
+  const bufferPromise = new Promise<Buffer>((resolve, reject) => {
+    output.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    output.on("end", () => resolve(Buffer.concat(chunks)));
+    output.on("error", reject);
+    archive.on("error", reject);
   });
+
+  archive.pipe(output);
+
+  files.forEach((file) => {
+    archive.append(file.content, { name: file.path });
+  });
+
+  await archive.finalize();
+  return bufferPromise;
 }
 
 export async function POST(request: Request) {
-  const paid = await hasPaidAccess();
-  if (!paid) {
-    return Response.json({ error: "Paid access required" }, { status: 403 });
+  const cookieStore = await cookies();
+  const accessCookie = cookieStore.get(paywallCookieName)?.value;
+
+  if (!hasPaidCookie(accessCookie)) {
+    return new NextResponse("Purchase required.", { status: 402 });
   }
 
-  const body = await request.json();
-  const parsed = assessmentSchema.safeParse(body);
+  let payload: unknown;
+  try {
+    payload = await request.json();
+  } catch {
+    return new NextResponse("Invalid JSON payload.", { status: 400 });
+  }
 
+  const parsed = accessibilityAssessmentSchema.safeParse(payload);
   if (!parsed.success) {
-    return Response.json(
+    return NextResponse.json(
       {
-        error: "Invalid assessment payload",
-        issues: parsed.error.flatten()
+        error: "Invalid assessment payload.",
+        issues: parsed.error.issues
       },
       { status: 400 }
     );
   }
 
-  const generated = createConfigBundle(parsed.data);
-  const zipBuffer = await zipFiles([
-    {
-      name: "settings.json",
-      content: JSON.stringify(generated.vscodeSettings, null, 2)
-    },
-    {
-      name: "keybindings.json",
-      content: JSON.stringify(generated.keybindings, null, 2)
-    },
-    {
-      name: "terminal-profile.txt",
-      content: generated.terminalProfile
-    },
-    {
-      name: "install.sh",
-      content: generated.installScript
-    },
-    {
-      name: "README.md",
-      content: generated.readme
-    }
-  ]);
+  const bundle = generateConfigBundle(parsed.data);
+  const zipBuffer = await zipFiles(bundle.files);
+  const zipBytes = new Uint8Array(zipBuffer);
 
-  const binary = new Uint8Array(zipBuffer);
-
-  return new Response(binary, {
+  return new NextResponse(zipBytes, {
     status: 200,
     headers: {
       "Content-Type": "application/zip",
-      "Content-Disposition": 'attachment; filename="blind-dev-assistant-config.zip"'
+      "Content-Disposition": `attachment; filename="${bundle.filename}"`,
+      "X-Setup-Checklist": Buffer.from(JSON.stringify(bundle.setupChecklist), "utf8").toString("base64")
     }
   });
 }

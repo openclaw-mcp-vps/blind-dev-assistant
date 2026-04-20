@@ -1,23 +1,24 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Volume2, VolumeX } from "lucide-react";
-import { Button } from "@/components/ui/button";
 
-type AudioFeedbackProps = {
-  message: string;
-  autoSpeak?: boolean;
-};
+interface AudioFeedbackProps {
+  announcement: string;
+  assertive?: boolean;
+  speak?: boolean;
+}
 
-export function AudioFeedback({ message, autoSpeak = true }: AudioFeedbackProps) {
-  const [enabled, setEnabled] = useState(true);
+export function AudioFeedback({ announcement, assertive = false, speak = true }: AudioFeedbackProps) {
+  const [liveMessage, setLiveMessage] = useState(announcement);
 
   useEffect(() => {
-    if (!autoSpeak || !enabled || !message || typeof window === "undefined") {
+    setLiveMessage(announcement);
+
+    if (!speak || !announcement || typeof window === "undefined" || !("speechSynthesis" in window)) {
       return;
     }
 
-    const utterance = new SpeechSynthesisUtterance(message);
+    const utterance = new SpeechSynthesisUtterance(announcement);
     utterance.rate = 1;
     utterance.pitch = 1;
     window.speechSynthesis.cancel();
@@ -26,27 +27,16 @@ export function AudioFeedback({ message, autoSpeak = true }: AudioFeedbackProps)
     return () => {
       window.speechSynthesis.cancel();
     };
-  }, [message, autoSpeak, enabled]);
-
-  const handleToggle = () => {
-    setEnabled((prev) => {
-      const next = !prev;
-      if (!next && typeof window !== "undefined") {
-        window.speechSynthesis.cancel();
-      }
-      return next;
-    });
-  };
+  }, [announcement, speak]);
 
   return (
-    <div className="rounded-lg border border-slate-700 bg-slate-900/80 p-4" aria-live="polite">
-      <div className="flex items-center justify-between gap-4">
-        <p className="text-sm text-slate-300">{message}</p>
-        <Button type="button" variant="secondary" onClick={handleToggle} aria-pressed={enabled}>
-          {enabled ? <Volume2 className="h-4 w-4" aria-hidden="true" /> : <VolumeX className="h-4 w-4" aria-hidden="true" />}
-          <span className="ml-2 text-xs">{enabled ? "Audio On" : "Audio Off"}</span>
-        </Button>
-      </div>
-    </div>
+    <p
+      aria-live={assertive ? "assertive" : "polite"}
+      aria-atomic="true"
+      className="sr-only"
+      role={assertive ? "alert" : "status"}
+    >
+      {liveMessage}
+    </p>
   );
 }

@@ -1,73 +1,51 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { verifyWebhookSignature } from "@/lib/lemonsqueezy";
+import { NextResponse } from "next/server";
 
-type PurchaseRecord = {
-  email: string;
-  createdAt: string;
-  source: string;
-  orderId?: string;
-  productName?: string;
-};
+import { upsertPurchase, verifyLemonSqueezySignature } from "@/lib/lemonsqueezy";
 
-const purchasesPath = join(process.cwd(), "data", "purchases.json");
+export const runtime = "nodejs";
 
-function readPurchases(): PurchaseRecord[] {
-  if (!existsSync(purchasesPath)) {
-    return [];
+function normalizeStatus(eventName: string): "paid" | "refunded" {
+  if (eventName.includes("refund") || eventName.includes("cancel")) {
+    return "refunded";
   }
 
-  try {
-    const raw = readFileSync(purchasesPath, "utf8");
-    return JSON.parse(raw) as PurchaseRecord[];
-  } catch {
-    return [];
-  }
-}
-
-function writePurchases(purchases: PurchaseRecord[]) {
-  writeFileSync(purchasesPath, JSON.stringify(purchases, null, 2), "utf8");
+  return "paid";
 }
 
 export async function POST(request: Request) {
   const rawBody = await request.text();
   const signature = request.headers.get("x-signature");
 
-  if (!verifyWebhookSignature(rawBody, signature)) {
-    return Response.json({ error: "Invalid signature" }, { status: 401 });
+  if (!verifyLemonSqueezySignature(rawBody, signature)) {
+    return new NextResponse("Invalid webhook signature.", { status: 401 });
   }
 
-  const payload = JSON.parse(rawBody) as {
-    meta?: { event_name?: string };
-    data?: { attributes?: Record<string, unknown>; id?: string };
-  };
-
-  const eventName = payload.meta?.event_name || "unknown";
-  const attributes = payload.data?.attributes || {};
-
-  const email =
-    (attributes.user_email as string | undefined) ||
-    (attributes.customer_email as string | undefined) ||
-    (attributes.email as string | undefined);
-
-  if (!email) {
-    return Response.json({ status: "ignored", reason: "email_missing" });
+  let body: any;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    return new NextResponse("Webhook payload is not valid JSON.", { status: 400 });
   }
 
-  const purchases = readPurchases();
-  const normalizedEmail = email.toLowerCase().trim();
+  const eventName = String(body?.meta?.event_name ?? "unknown");
+  const attributes = body?.data?.attributes ?? {};
 
-  const alreadyExists = purchases.some((purchase) => purchase.email === normalizedEmail);
-  if (!alreadyExists) {
-    purchases.push({
-      email: normalizedEmail,
-      createdAt: new Date().toISOString(),
-      source: eventName,
-      orderId: payload.data?.id,
-      productName: (attributes.product_name as string | undefined) ?? "Blind Dev Assistant Pro"
-    });
-    writePurchases(purchases);
+  const orderId = String(attributes?.order_id ?? body?.data?.id ?? "");
+  const email = String(attributes?.user_email ?? attributes?.customer_email ?? "unknown@example.com");
+  const productId =
+    attributes?.first_order_item?.product_id != null ? String(attributes?.first_order_item?.product_id) : undefined;
+
+  if (!orderId) {
+    return NextResponse.json({ received: true, ignored: true, reason: "missing order id" }, { status: 200 });
   }
 
-  return Response.json({ status: "ok" });
+  await upsertPurchase({
+    orderId,
+    email,
+    productId,
+    status: normalizeStatus(eventName),
+    createdAt: new Date().toISOString()
+  });
+
+  return NextResponse.json({ received: true, eventName }, { status: 200 });
 }
