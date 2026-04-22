@@ -1,73 +1,62 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Download, Lock, Terminal } from "lucide-react";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { Download, RefreshCcw } from "lucide-react";
 
-import { AudioFeedback } from "@/components/AudioFeedback";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { assessmentSchema, type AssessmentInput } from "@/lib/assessment-schema";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger
-} from "@/components/ui/dialog";
-import { buildAccessibilityNotes, getScreenReaderExtension } from "@/lib/screen-reader-utils";
-import type { AccessibilityAssessment } from "@/types/accessibility";
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle
+} from "@/components/ui/card";
 
-interface ConfigGeneratorProps {
-  assessment: AccessibilityAssessment | null;
-}
+export function ConfigGenerator() {
+  const [assessment, setAssessment] = useState<AssessmentInput | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string>("");
+  const [isGenerating, setIsGenerating] = useState<boolean>(false);
 
-function parseChecklistHeader(raw: string | null): string[] {
-  if (!raw || typeof window === "undefined") {
-    return [];
-  }
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("bda-assessment");
+      if (!raw) {
+        return;
+      }
 
-  try {
-    const decoded = window.atob(raw);
-    const parsed = JSON.parse(decoded);
-    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
-  } catch {
-    return [];
-  }
-}
+      const parsed = assessmentSchema.safeParse(JSON.parse(raw));
+      if (parsed.success) {
+        setAssessment(parsed.data);
+      }
+    } catch {
+      setStatusMessage("Stored assessment could not be read. Re-run the assessment.");
+    }
+  }, []);
 
-export function ConfigGenerator({ assessment }: ConfigGeneratorProps) {
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [announcement, setAnnouncement] = useState("");
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [checklist, setChecklist] = useState<string[]>([]);
-
-  const notes = useMemo(() => {
+  const summary = useMemo(() => {
     if (!assessment) {
-      return [];
+      return [] as string[];
     }
 
-    return buildAccessibilityNotes(assessment);
+    return [
+      `${assessment.operatingSystem} + ${assessment.screenReader}`,
+      `${assessment.terminalShell} shell profile`,
+      `${assessment.developmentFocus.length} focus areas`,
+      `Debug feedback: ${assessment.debugFeedback}`
+    ];
   }, [assessment]);
 
-  const extensions = useMemo(() => {
+  const handleGenerate = async (): Promise<void> => {
     if (!assessment) {
-      return [];
-    }
-
-    return getScreenReaderExtension(assessment);
-  }, [assessment]);
-
-  const generateConfig = async () => {
-    if (!assessment) {
-      setError("Complete the accessibility assessment first.");
-      setAnnouncement("Complete the accessibility assessment before generating a package.");
+      setStatusMessage("Complete the assessment before generating your configuration package.");
       return;
     }
 
-    setError(null);
     setIsGenerating(true);
-    setAnnouncement("Generating your configuration package.");
+    setStatusMessage("");
 
     try {
       const response = await fetch("/api/generate-config", {
@@ -78,139 +67,72 @@ export function ConfigGenerator({ assessment }: ConfigGeneratorProps) {
         body: JSON.stringify(assessment)
       });
 
-      if (response.status === 402) {
-        setError("Purchase is required before downloading configuration bundles.");
-        setAnnouncement("Purchase is required before downloading configuration bundles.");
+      if (!response.ok) {
+        const data = (await response.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        setStatusMessage(data?.error ?? "Config generation failed.");
         return;
       }
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || "Generation failed.");
-      }
-
       const blob = await response.blob();
-      const disposition = response.headers.get("content-disposition") ?? "attachment; filename=blind-dev-assistant-config.zip";
-      const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
-      const filename = filenameMatch?.[1] ?? "blind-dev-assistant-config.zip";
-
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-
-      setChecklist(parseChecklistHeader(response.headers.get("x-setup-checklist")));
-      setDialogOpen(true);
-      setAnnouncement("Configuration package downloaded. Follow the installation checklist.");
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to generate config package.");
-      setAnnouncement("Generation failed. Review the error message and try again.");
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = "blind-dev-assistant-config.zip";
+      anchor.click();
+      URL.revokeObjectURL(objectUrl);
+      setStatusMessage("Package generated successfully. Your download should begin now.");
+    } catch {
+      setStatusMessage("Network error while generating package. Try again.");
     } finally {
       setIsGenerating(false);
     }
   };
 
-  if (!assessment) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>No Accessibility Profile Found</CardTitle>
-          <CardDescription>
-            Complete the assessment to unlock a tailored VS Code and terminal setup package.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-slate-300">
-            The generator needs your screen reader, OS, and workflow preferences to build useful keybindings and scripts.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
-
   return (
-    <>
-      <AudioFeedback announcement={announcement} speak />
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Terminal className="h-5 w-5 text-blue-300" />
-            Personalized Config Generator
-          </CardTitle>
-          <CardDescription>
-            Generates downloadable `.vscode` settings, language extensions, and setup scripts tuned for your assistive workflow.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-6">
-          <section className="grid gap-2">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Accessibility notes included</h3>
-            <ul className="grid gap-2 text-sm text-slate-200">
-              {notes.map((note) => (
-                <li key={note} className="rounded-md border border-[#30363d] bg-[#0b1220] px-3 py-2">
-                  {note}
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          <section className="grid gap-2">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Preselected extension profile</h3>
-            <ul className="grid gap-2 sm:grid-cols-2">
-              {extensions.map((extension) => (
-                <li key={extension} className="rounded-md border border-[#30363d] bg-[#0b1220] px-3 py-2 text-sm text-slate-200">
-                  {extension}
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          {error ? (
-            <div className="inline-flex items-center gap-2 rounded-md border border-red-400/40 bg-red-950/30 px-3 py-2 text-sm text-red-200">
-              <Lock className="h-4 w-4" />
-              {error}
-            </div>
-          ) : null}
-
-          <div className="flex flex-wrap gap-3">
-            <Button size="lg" onClick={generateConfig} disabled={isGenerating}>
-              <Download className="h-4 w-4" />
-              {isGenerating ? "Generating package..." : "Download Config Package"}
-            </Button>
-
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-              <DialogTrigger asChild>
-                <Button variant="secondary" size="lg">
-                  View Setup Checklist
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Installation Checklist</DialogTitle>
-                  <DialogDescription>
-                    Follow these steps after downloading to get your environment working in one pass.
-                  </DialogDescription>
-                </DialogHeader>
-                <ol className="mt-4 grid list-decimal gap-2 pl-5 text-sm text-slate-200">
-                  {(checklist.length
-                    ? checklist
-                    : [
-                        "Run the setup script included in the downloaded bundle.",
-                        "Restart VS Code and verify keybindings using command palette.",
-                        "Run a build task and confirm audio cues announce pass/fail states."
-                      ]
-                  ).map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ol>
-              </DialogContent>
-            </Dialog>
+    <Card>
+      <CardHeader>
+        <CardTitle>Generate Personalized Setup Package</CardTitle>
+        <CardDescription>
+          Create a zip package with tuned VS Code settings, keybindings, shell profile,
+          and an onboarding guide for your team.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {assessment ? (
+          <ul className="grid gap-2 text-sm text-slate-300 md:grid-cols-2">
+            {summary.map((item) => (
+              <li key={item} className="rounded-md border border-slate-700 p-3">
+                {item}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-200">
+            No saved assessment was found for this browser session.
           </div>
-        </CardContent>
-      </Card>
-    </>
+        )}
+
+        <div className="flex flex-wrap gap-3">
+          <Button type="button" onClick={handleGenerate} disabled={isGenerating}>
+            <Download className="mr-2 h-4 w-4" aria-hidden="true" />
+            {isGenerating ? "Generating package..." : "Generate Config Package"}
+          </Button>
+          <Link
+            href="/assessment"
+            className={cn(
+              buttonVariants({ variant: "outline" }),
+              "inline-flex items-center"
+            )}
+          >
+            <RefreshCcw className="mr-2 h-4 w-4" aria-hidden="true" />
+            Update Assessment
+          </Link>
+        </div>
+
+        {statusMessage ? <p className="text-sm text-cyan-200">{statusMessage}</p> : null}
+      </CardContent>
+    </Card>
   );
 }

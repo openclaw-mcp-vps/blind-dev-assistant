@@ -3,70 +3,76 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { PassThrough } from "node:stream";
 
-import { generateConfigBundle } from "@/lib/config-templates";
-import { hasPaidCookie, paywallCookieName } from "@/lib/lemonsqueezy";
-import { accessibilityAssessmentSchema, type GeneratedConfigFile } from "@/types/accessibility";
+import { PAID_ACCESS_COOKIE, verifyPaidAccessToken } from "@/lib/auth";
+import { assessmentSchema } from "@/lib/assessment-schema";
+import { buildConfigArtifacts } from "@/lib/config-templates";
 
 export const runtime = "nodejs";
 
-async function zipFiles(files: GeneratedConfigFile[]): Promise<Buffer> {
+async function zipArtifacts(
+  files: Array<{ path: string; content: string }>
+): Promise<Buffer> {
   const archive = archiver("zip", { zlib: { level: 9 } });
-  const output = new PassThrough();
+  const stream = new PassThrough();
   const chunks: Buffer[] = [];
 
-  const bufferPromise = new Promise<Buffer>((resolve, reject) => {
-    output.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-    output.on("end", () => resolve(Buffer.concat(chunks)));
-    output.on("error", reject);
+  const finalized = new Promise<Buffer>((resolve, reject) => {
+    stream.on("data", (chunk) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+
+    stream.on("end", () => {
+      resolve(Buffer.concat(chunks));
+    });
+
+    stream.on("error", reject);
     archive.on("error", reject);
   });
 
-  archive.pipe(output);
+  archive.pipe(stream);
 
-  files.forEach((file) => {
+  for (const file of files) {
     archive.append(file.content, { name: file.path });
-  });
+  }
 
   await archive.finalize();
-  return bufferPromise;
+  return finalized;
 }
 
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<Response> {
   const cookieStore = await cookies();
-  const accessCookie = cookieStore.get(paywallCookieName)?.value;
+  const paidCookie = cookieStore.get(PAID_ACCESS_COOKIE)?.value;
+  const session = verifyPaidAccessToken(paidCookie);
 
-  if (!hasPaidCookie(accessCookie)) {
-    return new NextResponse("Purchase required.", { status: 402 });
+  if (!session.isValid) {
+    return NextResponse.json(
+      { error: "Paid access is required before generating configuration packages." },
+      { status: 401 }
+    );
   }
 
-  let payload: unknown;
-  try {
-    payload = await request.json();
-  } catch {
-    return new NextResponse("Invalid JSON payload.", { status: 400 });
-  }
+  const body = await request.json().catch(() => null);
+  const parsed = assessmentSchema.safeParse(body);
 
-  const parsed = accessibilityAssessmentSchema.safeParse(payload);
   if (!parsed.success) {
     return NextResponse.json(
       {
-        error: "Invalid assessment payload.",
-        issues: parsed.error.issues
+        error: "Assessment payload is invalid.",
+        details: parsed.error.flatten()
       },
       { status: 400 }
     );
   }
 
-  const bundle = generateConfigBundle(parsed.data);
-  const zipBuffer = await zipFiles(bundle.files);
-  const zipBytes = new Uint8Array(zipBuffer);
+  const files = buildConfigArtifacts(parsed.data);
+  const zipBuffer = await zipArtifacts(files);
 
-  return new NextResponse(zipBytes, {
+  return new Response(new Uint8Array(zipBuffer), {
     status: 200,
     headers: {
       "Content-Type": "application/zip",
-      "Content-Disposition": `attachment; filename="${bundle.filename}"`,
-      "X-Setup-Checklist": Buffer.from(JSON.stringify(bundle.setupChecklist), "utf8").toString("base64")
+      "Content-Disposition": "attachment; filename=blind-dev-assistant-config.zip",
+      "Cache-Control": "no-store"
     }
   });
 }

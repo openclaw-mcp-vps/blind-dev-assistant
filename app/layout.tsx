@@ -1,54 +1,70 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Mono, Space_Grotesk, Geist } from "next/font/google";
+import { IBM_Plex_Mono, Space_Grotesk } from "next/font/google";
 
 import "@/app/globals.css";
 import { cn } from "@/lib/utils";
 
-const geist = Geist({subsets:['latin'],variable:'--font-sans'});
-
-const heading = Space_Grotesk({
+const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
-  variable: "--font-heading",
-  weight: ["500", "700"]
+  display: "swap",
+  variable: "--font-sans"
 });
 
-const body = IBM_Plex_Mono({
+const plexMono = IBM_Plex_Mono({
   subsets: ["latin"],
-  variable: "--font-body",
-  weight: ["400", "500", "700"]
+  display: "swap",
+  variable: "--font-mono",
+  weight: ["400", "500", "600"]
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://blind-dev-assistant.com"),
-  title: "Blind Dev Assistant | Screen Reader Optimized Coding Setup",
+  metadataBase: new URL("https://blinddevassistant.com"),
+  title: "Blind Dev Assistant | Screen Reader Optimized Coding Environment Setup",
   description:
-    "Generate a production-ready VS Code and terminal setup tailored for blind developers, including accessible keybindings, extension packs, and guided installation.",
+    "Generate personalized VS Code and terminal accessibility setups for blind and visually impaired developers in minutes, not weeks.",
   keywords: [
-    "blind developer tools",
-    "accessible VS Code",
+    "accessible developer tools",
     "screen reader coding",
-    "inclusive engineering tooling",
-    "developer accessibility"
+    "blind developers",
+    "VS Code accessibility",
+    "inclusive engineering"
   ],
   openGraph: {
     title: "Blind Dev Assistant",
     description:
-      "Screen reader optimized coding environment setup with downloadable configuration bundles.",
-    type: "website",
-    url: "https://blind-dev-assistant.com"
+      "Automated VS Code and terminal setup packages optimized for screen reader workflows.",
+    url: "https://blinddevassistant.com",
+    siteName: "Blind Dev Assistant",
+    locale: "en_US",
+    type: "website"
   },
   twitter: {
     card: "summary_large_image",
     title: "Blind Dev Assistant",
     description:
-      "Build a reliable, screen reader-first coding environment in minutes instead of weeks."
+      "Automated setup packages for accessible coding environments and audio-first debugging."
+  },
+  robots: {
+    index: true,
+    follow: true
   }
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
   return (
-    <html lang="en" className={cn("dark", "font-sans", geist.variable)}>
-      <body className={`${heading.variable} ${body.variable} bg-[#0d1117] font-[var(--font-body)] text-slate-100`}>
+    <html lang="en">
+      <body
+        className={cn(
+          "bg-[#0d1117] text-slate-100 antialiased",
+          spaceGrotesk.variable,
+          plexMono.variable,
+          "font-[var(--font-sans)]"
+        )}
+      >
         {children}
       </body>
     </html>

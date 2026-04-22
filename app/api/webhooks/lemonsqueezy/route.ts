@@ -1,51 +1,74 @@
 import { NextResponse } from "next/server";
 
-import { upsertPurchase, verifyLemonSqueezySignature } from "@/lib/lemonsqueezy";
+import { markEmailPaid, verifyStripeWebhookSignature } from "@/lib/lemonsqueezy";
+
+type StripeWebhookEvent = {
+  id: string;
+  type: string;
+  created?: number;
+  data?: {
+    object?: {
+      customer_email?: string;
+      customer_details?: {
+        email?: string;
+      };
+      amount_total?: number;
+      currency?: string;
+    };
+  };
+};
 
 export const runtime = "nodejs";
 
-function normalizeStatus(eventName: string): "paid" | "refunded" {
-  if (eventName.includes("refund") || eventName.includes("cancel")) {
-    return "refunded";
+export async function POST(request: Request): Promise<NextResponse> {
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+  if (!webhookSecret) {
+    return NextResponse.json(
+      { error: "STRIPE_WEBHOOK_SECRET is not configured." },
+      { status: 500 }
+    );
   }
 
-  return "paid";
-}
+  const rawPayload = await request.text();
+  const signatureHeader = request.headers.get("stripe-signature");
 
-export async function POST(request: Request) {
-  const rawBody = await request.text();
-  const signature = request.headers.get("x-signature");
-
-  if (!verifyLemonSqueezySignature(rawBody, signature)) {
-    return new NextResponse("Invalid webhook signature.", { status: 401 });
-  }
-
-  let body: any;
-  try {
-    body = JSON.parse(rawBody);
-  } catch {
-    return new NextResponse("Webhook payload is not valid JSON.", { status: 400 });
-  }
-
-  const eventName = String(body?.meta?.event_name ?? "unknown");
-  const attributes = body?.data?.attributes ?? {};
-
-  const orderId = String(attributes?.order_id ?? body?.data?.id ?? "");
-  const email = String(attributes?.user_email ?? attributes?.customer_email ?? "unknown@example.com");
-  const productId =
-    attributes?.first_order_item?.product_id != null ? String(attributes?.first_order_item?.product_id) : undefined;
-
-  if (!orderId) {
-    return NextResponse.json({ received: true, ignored: true, reason: "missing order id" }, { status: 200 });
-  }
-
-  await upsertPurchase({
-    orderId,
-    email,
-    productId,
-    status: normalizeStatus(eventName),
-    createdAt: new Date().toISOString()
+  const validSignature = verifyStripeWebhookSignature({
+    payload: rawPayload,
+    signatureHeader,
+    webhookSecret
   });
 
-  return NextResponse.json({ received: true, eventName }, { status: 200 });
+  if (!validSignature) {
+    return NextResponse.json({ error: "Invalid Stripe signature." }, { status: 400 });
+  }
+
+  const event = JSON.parse(rawPayload) as StripeWebhookEvent;
+
+  if (event.type === "checkout.session.completed") {
+    const checkout = event.data?.object;
+    const email = checkout?.customer_details?.email ?? checkout?.customer_email;
+
+    if (email) {
+      await markEmailPaid({
+        email,
+        status: "paid",
+        source: "stripe",
+        eventId: event.id,
+        purchasedAt: new Date((event.created ?? Date.now() / 1000) * 1000).toISOString(),
+        amountTotal: checkout?.amount_total,
+        currency: checkout?.currency
+      });
+    }
+  }
+
+  return NextResponse.json({ received: true });
+}
+
+export async function GET(): Promise<NextResponse> {
+  return NextResponse.json({
+    ok: true,
+    endpoint: "/api/webhooks/lemonsqueezy",
+    purpose: "Stripe checkout webhook receiver"
+  });
 }

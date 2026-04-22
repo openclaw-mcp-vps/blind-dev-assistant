@@ -3,46 +3,26 @@
 :root {
   color-scheme: dark;
   --background: #0d1117;
-  --panel: #111827;
-  --panel-alt: #0b1220;
-  --text: #e6edf3;
-  --muted: #9ca3af;
-  --accent: #60a5fa;
+  --foreground: #e6edf3;
+  --muted: #8b949e;
   --border: #30363d;
+  --surface: #161b22;
+  --surface-elevated: #1f2630;
+  --accent: #38bdf8;
 }
 
 * {
   border-color: var(--border);
 }
 
-html,
 body {
-  background: radial-gradient(circle at top right, rgba(37, 99, 235, 0.15), transparent 38%),
-    radial-gradient(circle at 20% 80%, rgba(22, 163, 74, 0.12), transparent 36%), var(--background);
-  color: var(--text);
-  min-height: 100%;
-}
-
-body {
-  margin: 0;
+  min-height: 100vh;
+  background: radial-gradient(circle at top right, #1a2330 0%, var(--background) 42%),
+    radial-gradient(circle at bottom left, #131e2a 0%, var(--background) 36%),
+    var(--background);
+  color: var(--foreground);
 }
 
 a {
   color: inherit;
-  text-decoration: none;
-}
-
-.section-shell {
-  margin-inline: auto;
-  max-width: 72rem;
-  padding-inline: 1.25rem;
-}
-
-.kbd {
-  border: 1px solid #475569;
-  border-radius: 0.35rem;
-  background: #0f172a;
-  padding: 0.1rem 0.4rem;
-  font-size: 0.75rem;
-  font-weight: 600;
 }

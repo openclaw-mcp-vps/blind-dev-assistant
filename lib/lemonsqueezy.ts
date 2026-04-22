@@ -1,91 +1,129 @@
-import * as LemonSqueezySDK from "@lemonsqueezy/lemonsqueezy.js";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { lemonSqueezySetup } from "@lemonsqueezy/lemonsqueezy.js";
 
-interface PurchaseRecord {
-  orderId: string;
+export type PurchaseRecord = {
   email: string;
-  productId?: string;
-  status: "paid" | "refunded";
-  createdAt: string;
+  status: "paid";
+  source: "stripe";
+  eventId: string;
+  purchasedAt: string;
+  amountTotal?: number;
+  currency?: string;
+};
+
+type PurchaseStore = {
+  records: PurchaseRecord[];
+};
+
+const storePath = path.join(process.cwd(), "data", "purchases.json");
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
 }
 
-const dataFile = path.join(process.cwd(), "data", "purchases.json");
-
-export const paywallCookieName = "bda_paid_access";
-export const paywallCookieValue = "active";
-
-export function getCheckoutUrlFromEnv(): string | null {
-  const productId = process.env.NEXT_PUBLIC_LEMON_SQUEEZY_PRODUCT_ID;
-  if (!productId) {
-    return null;
+export function setupLegacyLemonSqueezyClient(apiKey?: string): void {
+  if (!apiKey) {
+    return;
   }
 
-  if (productId.startsWith("http://") || productId.startsWith("https://")) {
-    return productId;
-  }
-
-  return `https://checkout.lemonsqueezy.com/buy/${productId}`;
+  lemonSqueezySetup({
+    apiKey,
+    onError(error) {
+      console.error("LemonSqueezy setup error:", error);
+    }
+  });
 }
 
-export function verifyLemonSqueezySignature(rawBody: string, signature: string | null): boolean {
-  const secret = process.env.LEMON_SQUEEZY_WEBHOOK_SECRET;
-
-  if (!secret || !signature) {
-    return false;
-  }
-
-  const digest = createHmac("sha256", secret).update(rawBody).digest("hex");
-
+async function ensureStoreExists(): Promise<void> {
   try {
-    return timingSafeEqual(Buffer.from(digest), Buffer.from(signature));
+    await fs.access(storePath);
   } catch {
-    return false;
+    await fs.mkdir(path.dirname(storePath), { recursive: true });
+    const initialStore: PurchaseStore = { records: [] };
+    await fs.writeFile(storePath, JSON.stringify(initialStore, null, 2), "utf-8");
   }
 }
 
-async function readPurchases(): Promise<PurchaseRecord[]> {
-  try {
-    const raw = await fs.readFile(dataFile, "utf8");
-    const parsed = JSON.parse(raw) as PurchaseRecord[];
-    if (!Array.isArray(parsed)) {
-      return [];
+async function readStore(): Promise<PurchaseStore> {
+  await ensureStoreExists();
+  const raw = await fs.readFile(storePath, "utf-8");
+  return JSON.parse(raw) as PurchaseStore;
+}
+
+async function writeStore(store: PurchaseStore): Promise<void> {
+  await fs.writeFile(storePath, JSON.stringify(store, null, 2), "utf-8");
+}
+
+export async function markEmailPaid(record: PurchaseRecord): Promise<void> {
+  const store = await readStore();
+  const normalizedEmail = normalizeEmail(record.email);
+
+  const existingIndex = store.records.findIndex(
+    (item) => item.email === normalizedEmail
+  );
+
+  const normalizedRecord: PurchaseRecord = {
+    ...record,
+    email: normalizedEmail,
+    status: "paid",
+    source: "stripe"
+  };
+
+  if (existingIndex >= 0) {
+    store.records[existingIndex] = normalizedRecord;
+  } else {
+    store.records.push(normalizedRecord);
+  }
+
+  await writeStore(store);
+}
+
+export async function hasPaidAccess(email: string): Promise<boolean> {
+  const store = await readStore();
+  const normalizedEmail = normalizeEmail(email);
+  return store.records.some(
+    (record) => record.email === normalizedEmail && record.status === "paid"
+  );
+}
+
+export function verifyStripeWebhookSignature(params: {
+  payload: string;
+  signatureHeader: string | null;
+  webhookSecret: string;
+}): boolean {
+  const { payload, signatureHeader, webhookSecret } = params;
+
+  if (!signatureHeader || !webhookSecret) {
+    return false;
+  }
+
+  const elements = signatureHeader.split(",").map((part) => part.trim());
+  const timestamp = elements
+    .find((part) => part.startsWith("t="))
+    ?.replace("t=", "");
+  const signatures = elements
+    .filter((part) => part.startsWith("v1="))
+    .map((part) => part.replace("v1=", ""));
+
+  if (!timestamp || signatures.length === 0) {
+    return false;
+  }
+
+  const signedPayload = `${timestamp}.${payload}`;
+  const expected = createHmac("sha256", webhookSecret)
+    .update(signedPayload)
+    .digest("hex");
+
+  return signatures.some((candidate) => {
+    const expectedBuffer = Buffer.from(expected);
+    const candidateBuffer = Buffer.from(candidate);
+
+    if (expectedBuffer.length !== candidateBuffer.length) {
+      return false;
     }
 
-    return parsed;
-  } catch {
-    return [];
-  }
-}
-
-async function writePurchases(records: PurchaseRecord[]) {
-  await fs.mkdir(path.dirname(dataFile), { recursive: true });
-  await fs.writeFile(dataFile, JSON.stringify(records, null, 2), "utf8");
-}
-
-export async function upsertPurchase(record: PurchaseRecord) {
-  const records = await readPurchases();
-  const index = records.findIndex((item) => item.orderId === record.orderId);
-
-  if (index === -1) {
-    records.push(record);
-  } else {
-    records[index] = record;
-  }
-
-  await writePurchases(records);
-}
-
-export async function hasPaidOrder(orderId: string): Promise<boolean> {
-  const records = await readPurchases();
-  return records.some((record) => record.orderId === orderId && record.status === "paid");
-}
-
-export function sdkLoaded(): boolean {
-  return Object.keys(LemonSqueezySDK).length > 0;
-}
-
-export function hasPaidCookie(value: string | undefined): boolean {
-  return value === paywallCookieValue;
+    return timingSafeEqual(expectedBuffer, candidateBuffer);
+  });
 }
